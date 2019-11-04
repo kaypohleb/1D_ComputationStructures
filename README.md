@@ -1,6 +1,25 @@
 # COMP_STRUCT
 FPGA Mojo Lucid 
 
+### Manual Testing
+1. Power the FPGA board till display shows "0000".
+
+2. Press the down button till the display shows "000A" which calls for Input A.
+
+3. Set  16-bit value for A by switching dips number 0 to 15. unlit LEDs ->'0' and Lit LEDs -> '1'
+
+4. Once done, press the right button and wait until the display shows "000B". Repeat Step 3 for B but press center button instead
+
+5. Set the right button after setting ALUFN on dips number 0 to 5.
+
+6. Press the CENTER button to calculate the values using the chosen operators.
+
+7. Press the LEFT button at anytime to reset the FPGA to its initial state.
+
+### Automated Testing
+To run the automated testing, just press the RIGHT button till you see "AAAA".
+The automated testing tests each operation rigorously as seen below
+
 ## Test Cases 
 | operation | ALUF   | A                 | B                 | OUT              | A      | B      | OUT         | Rationale for test case     |
 |-----------|--------|-------------------|-------------------|------------------|--------|--------|-------------|-----------------------------|
