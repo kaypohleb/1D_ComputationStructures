@@ -1,0 +1,873 @@
+module mojo_top (
+    input clk,              // 50MHz clock
+    input rst_n,            // reset button (active low)
+    output led [8],         // 8 user controllable LEDs
+    input cclk,             // configuration clock, AVR ready when high    
+    output spi_miso,        // AVR SPI MISO
+    input spi_ss,           // AVR SPI Slave Select
+    input spi_mosi,         // AVR SPI MOSI
+    input spi_sck,          // AVR SPI Clock    
+    output spi_channel [4], // AVR general purpose pins (used by default to select ADC channel)
+    input avr_tx,           // AVR TX (FPGA RX)    
+    output avr_rx,          // AVR RX (FPGA
+    input avr_rx_busy,    // AVR RX buffer full     TX)
+    output io_led [3][8],   // LEDs on IO Shield
+    output io_seg [8],      // 7-segment LEDs on IO Shield
+    output io_sel [4],      // Digit select on IO Shield
+    input io_button [5],    // 5 buttons on IO Shield
+    input io_dip [3][8]     // DIP switches on IO Shield
+  ) {
+  
+  sig rst;                  // reset signal
+  alu myAlu;
+  
+
+    
+  .clk(clk) {
+    // The reset conditioner is used to synchronize the reset signal to the FPGA
+    // clock. This ensures the entire FPGA comes out of reset at the same time.
+    reset_conditioner reset_cond;
+    fsm states = {IDLE, INPUTA, INPUTB, INPUTALUFN, CALCULATEOUPUT, AUTO, // Manual testing
+              ADD1, ADD2, ADD3, SUB1, SUB2, SUB3, MULT1, MULT2, MULT3,
+              AND1, AND2, AND3, OR1, OR2, OR3, XOR1, XOR2, XOR3,A1,   
+              SHL1, SHL2, SHL3, SHR1, SHR2, SHR3, SHA1, SHA2, SHA3, 
+              CPEQ1, CPEQ2, CPEQ3, CPLT1, CPLT2, CPLT3, CPLE1, CPLE2, CPLE3,ROTR,ROTL,P,F};
+    dff input_a[16]; //store input of a
+    dff input_b[16]; //store input of b
+    dff input_alufn[6];
+    dff counter[27];
+    .rst(rst){ 
+      
+      multi_seven_seg seg;
+    }
+    
+  }
+
+   
+  always {
+    reset_cond.in = ~rst_n; // input raw inverted reset signal
+    rst = reset_cond.out;   // conditioned reset
+    led = 8h00;             // turn LEDs off
+    io_led = 3x{{8h00}};    // turn LEDs off
+    spi_miso = bz;          // not using SPI
+    spi_channel = bzzzz;    // not using flags
+    avr_rx = bz;            // not using serial port
+    io_seg = 8hff;          // turn segments off
+    io_sel = 4hf;           // select no digits
+
+    //7 segment
+    io_seg = ~seg.seg;      // connect segments to the driver
+    io_sel = ~seg.sel;      // connect digit select to the driver
+    
+    myAlu.a = 0;            // assigning the inputs
+    myAlu.b = 0;             // assigning the inputs
+    myAlu.alufn = 0;
+    seg.values = {4h0,4h0,4h0,4h0};
+    
+    case(states.q){      
+    // MANUAL TESTING
+      states.IDLE:
+        seg.values = {4h0,4h0,4h0,4h0};  
+        if (io_button[2] == 1) {           // down button -> start manual
+          states.d = states.INPUTA;       
+        }
+        
+      
+      states.CALCULATEOUPUT:
+       seg.values = {4h0,4h0,4h0,4hD};
+        myAlu.a = input_a.q;              // taking the stored value of A as the input A in myAlu source file
+        myAlu.b = input_b.q; 
+        myAlu.alufn = input_alufn.q;      // Value of DIP -> ALUFN
+        io_led[1] = myAlu.out[15:8];      // show output of alu
+        io_led[0] = myAlu.out[7:0];
+        if (io_button[1] == 1) {
+          states.d = states.IDLE;
+          }
+        
+      states.INPUTA:
+       seg.values = {4h0,4h0,4h0,4hA}; 
+        io_led[1][7:0] = io_dip[1];      //inputA -> led form
+        io_led[0][7:0] = io_dip[0];
+        input_a.d = c{io_dip[1][7:0], io_dip[0][7:0]};  // Value of DIP -> INPUTA
+        if (io_button[4] == 1) {         // right button -> INPUTB
+          states.d = states.INPUTB;
+        } else if (io_button[3] == 1) {  // left button -> reset button
+          states.d = states.IDLE;
+        }
+        
+      states.INPUTB:
+        seg.values = {4h0,4h0,4h0,4hB};
+        io_led[1][7:0] = io_dip[1];       //inputB -> led form
+        io_led[0][7:0] = io_dip[0]; 
+        input_b.d = c{io_dip[1][7:0], io_dip[0][7:0]};  // Value of DIP -> INPUTB
+        if (io_button[1] == 1) {
+          states.d = states.INPUTALUFN;   // center button -> ALUFN
+        } else if (io_button[3] == 1) {
+          states.d = states.IDLE;
+        }
+        states.INPUTALUFN:
+        seg.values = {4h0,4h0,4h0,4hC};
+        io_led[0][5:0] = io_dip[0][5:0];
+        input_alufn.d = c{io_dip[0][5:0]};
+        if (io_button[4] == 1) {          // right button -> CALCULATE
+          states.d = states.CALCULATEOUPUT;
+        } else if (io_button[3] == 1) {   // left button -> reset button
+          states.d = states.IDLE;
+        }
+        
+      states.P:                
+        seg.values = {4h0,4h0,4h0,4hE};   //Pass set for 7 Segment
+        
+      states.F:
+        seg.values = {4h0,4h0,4h0,4hF};   //Pass set for 7 Segment     
+      
+      states.AUTO:
+        seg.values = {4hA,4hA,4hA,4hA};   //AUTO set for 7 Segment
+ 
+      // ADDER SET TEST
+      states.ADD1:
+       seg.values = {4hA,4h1,4h0,4h1};    //A101 test for normal addition
+        myAlu.alufn = 6b000000;   
+        myAlu.a = 16b0010101010101010;  
+        myAlu.b = 16b0001010101010101;  
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }  
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0];  
+        
+      states.ADD2:
+       seg.values = {4hA,4h1,4h0,4h2};   //A102 test for negative number
+        myAlu.alufn = 6b000000;   
+        myAlu.a = 16b1010101010101010;
+        myAlu.b = 16b0101010101010101;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }  
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0]; 
+        
+      states.ADD3:
+       seg.values = {4hA,4h1,4h0,4h3};   //A103 test for OVERFLOW
+        myAlu.alufn = 6b000000;   
+        myAlu.a = 16b0111111111111111;
+        myAlu.b = 16b0111111111111111;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }   
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0]; 
+        
+      states.SUB1:
+       seg.values = {4hA,4h2,4h0,4h1};   //A201 test for normal subtraction
+        myAlu.alufn = 6b000001;   
+        myAlu.a = 16b0010101010101010;
+        myAlu.b = 16b0001010101010111;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }   
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0]; 
+        
+      states.SUB2:
+       seg.values = {4hA,4h2,4h0,4h2};   //A202 test for negative subtraction
+        myAlu.alufn = 6b000001;   
+        myAlu.a = 16b1010101010101010;
+        myAlu.b = 16b1001010001010101;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }     
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0]; 
+        
+      states.SUB3:
+        seg.values = {4hA,4h2,4h0,4h3};   //A203 test for OVERFLOW
+        myAlu.alufn = 6b000001;   
+        myAlu.a = 16b0111111111111111;
+        myAlu.b = 16b1000000000001111;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }     
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0]; 
+        
+      states.MULT1:
+       seg.values = {4hA,4h3,4h0,4h1};   //A301 test for multiply by 0
+        myAlu.alufn = 6b000010;   
+        myAlu.a = 16b0100000000000000;
+        myAlu.b = 16b0000000000000000;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }     
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0]; 
+        
+      states.MULT2:
+       seg.values = {4hA,4h3,4h0,4h2};   //A302 test for OVERFLOW
+        myAlu.alufn = 6b000010;   
+        myAlu.a = 16b0100000000000000;
+        myAlu.b = 16b0010000000000000;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }        
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0]; 
+        
+      states.MULT3:
+       seg.values = {4hA,4h3,4h0,4h3};   //A303 test for normal multiplication
+        myAlu.alufn = 6b000010;   
+        myAlu.a = 16b0000000010000000;
+        myAlu.b = 16b0000000000001000;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }      
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0];                 
+          
+      // BOOLEAN SET TEST         
+      states.AND1:
+       seg.values = {4hB,4h1,4h0,4h1};   //B101
+        myAlu.alufn = 6b011000; 
+        myAlu.a = 16b0001010101010101;
+        myAlu.b = 16b0000111111100101;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }     
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0];
+                
+      states.AND2:
+       seg.values = {4hB,4h1,4h0,4h2};   //B102
+        myAlu.alufn = 6b011000;   
+        myAlu.a = 16b0001010101010101;
+        myAlu.b = 16b0001110000000000;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }             
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0];
+                       
+      states.AND3:
+       seg.values = {4hB,4h1,4h0,4h3};   //B103
+        myAlu.alufn = 6b011000;
+        myAlu.a = 16b1001010101000101;
+        myAlu.b = 16b0000111111100101;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }            
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0];
+        
+      states.OR1:
+       seg.values = {4hB,4h2,4h0,4h1};   //B201
+        myAlu.alufn = 6b011110;   
+        myAlu.a = 16b0001010101010101;
+        myAlu.b = 16b0000111111100101;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }     
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0];
+        
+      states.OR2:
+       seg.values = {4hB,4h2,4h0,4h2};   //B202
+        myAlu.alufn = 6b011110;   
+        myAlu.a = 16b0001010101010101;
+        myAlu.b = 16b0001110000000000;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }       
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0];
+        
+      states.OR3:
+       seg.values = {4hB,4h2,4h0,4h3};   //B203
+        myAlu.alufn = 6b011110;   
+        myAlu.a = 16b1001010101000101;
+        myAlu.b = 16b0000111111100101;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }     
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0];  
+        
+      states.XOR1:
+        seg.values = {4hB,4h3,4h0,4h1};   //B301
+        myAlu.alufn = 6b010110;   
+        myAlu.a = 16b0001010101010101;
+        myAlu.b = 16b0000111111100101;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }      
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0]; 
+        
+      states.XOR2:
+       seg.values = {4hB,4h3,4h0,4h2};   //B302
+        myAlu.alufn = 6b010110;   
+        myAlu.a = 16b0001010101010101;
+        myAlu.b = 16b0001110000000000;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }     
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0]; 
+        
+      states.XOR3:
+       seg.values = {4hB,4h3,4h0,4h3};   //B303
+        myAlu.alufn = 6b010110;   
+        myAlu.a = 16b1001010101000101;
+        myAlu.b = 16b0000111111100101;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }     
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0];         
+      
+        states.A1:
+       seg.values = {4hB,4hA,4h0,4h1};   //BA01
+        myAlu.alufn = 6b011010;   
+        myAlu.a = 16b1001010101000101;
+        myAlu.b = 16b0000111111100101;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }     
+        io_led[1] = myAlu.out[15:8];        
+        io_led[0] = myAlu.out[7:0];
+        
+
+      // SHIFT SET TEST
+      states.SHL1:  
+       seg.values = {4hD,4h1,4h0,4h1};   //S101 Shift by 1
+        myAlu.alufn = 6b100000;   
+        myAlu.a = 16b0001010101010101;
+        myAlu.b = 16b0000000000000001;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }     
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0];
+        
+      states.SHL2:
+       seg.values = {4hD,4h1,4h0,4h2};   //S102 Max shift 
+        myAlu.alufn = 6b100000;   
+        myAlu.a = 16b0001010101010101;
+        myAlu.b = 16b0000000000001111;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }     
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0];
+        
+      states.SHL3:
+       seg.values = {4hD,4h1,4h0,4h3};   //S103 Normal Shift
+        myAlu.alufn = 6b100000;   
+        myAlu.a = 16b0001010101010101;
+        myAlu.b = 16b0000111100100101;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }    
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0];
+        
+      states.SHR1: 
+       seg.values = {4hD,4h2,4h0,4h1};   //S201 Shift by 1 
+        myAlu.alufn = 6b100001;   
+        myAlu.a = 16b0001010101010101;
+        myAlu.b = 16b0000000000000001;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }    
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0];
+        
+      states.SHR2: 
+       seg.values = {4hD,4h2,4h0,4h2};   //S202 Max shift 
+        myAlu.alufn = 6b100001;   
+        myAlu.a = 16b1001010101010101;
+        myAlu.b = 16b0000000000001111;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }    
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0];
+        
+      states.SHR3: 
+       seg.values = {4hD,4h2,4h0,4h3};   //S203 Normal Shift
+        myAlu.alufn = 6b100001;   
+        myAlu.a = 16b0001010101010101;
+        myAlu.b = 16b0000111100100101;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }    
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0];
+        
+      states.SHA1: 
+       seg.values = {4hD,4h3,4h0,4h1};   //S301 Shift by 1   
+        myAlu.alufn = 6b100011;   
+        myAlu.a = 16b0001010101010101;
+        myAlu.b = 16b0000000000000001;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }    
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0];
+        
+      states.SHA2:  
+        myAlu.alufn = 6b100011;
+        seg.values = {4hD,4h3,4h0,4h2};   //S302 Max shift   
+        myAlu.a = 16b1001010101010101;
+        myAlu.b = 16b0000000000001111;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }     
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0];
+        
+      states.SHA3:
+       seg.values = {4hD,4h3,4h0,4h3};   //S303 Normal shift  
+        myAlu.alufn = 6b100011;   
+        myAlu.a = 16b1001010101010101;
+        myAlu.b = 16b0000111100100101;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }        
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0];    
+        
+      //COMPARE SET TEST          
+      states.CPEQ1:
+       seg.values = {4hC,4h1,4h0,4h1};   //C101 A<B  
+        myAlu.alufn = 6b110011;   
+        myAlu.a = 16b0011011010110001;
+        myAlu.b = 16b1111011010110001;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }   
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0];       
+        
+      states.CPEQ2:  
+       seg.values = {4hC,4h1,4h0,4h2};   //C102 A=B 
+        myAlu.alufn = 6b110011;   
+        myAlu.a = 16b0011011010110001;
+        myAlu.b = 16b0011011010110001;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }      
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0]; 
+        
+      states.CPEQ3: 
+       seg.values = {4hC,4h1,4h0,4h3};   //C103 A>B  
+        myAlu.a = 16b0111011010110001;
+        myAlu.b = 16b0011011010110001;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }   
+        myAlu.alufn = 6b110011;   
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0]; 
+        
+      states.CPLT1:
+       seg.values = {4hC,4h2,4h0,4h1};   //C201 A<B 
+        myAlu.alufn = 6b110101;   
+        myAlu.a = 16b0011011010110001;
+        myAlu.b = 16b0111011010110001;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }           
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0]; 
+        
+      states.CPLT2:
+       seg.values = {4hC,4h2,4h0,4h2};   //C202 A=B   
+        myAlu.alufn = 6b110101;   
+        myAlu.a = 16b0011011010110001;
+        myAlu.b = 16b0011011010110001;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }   
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0]; 
+        
+      states.CPLT3:
+       seg.values = {4hC,4h2,4h0,4h3};   //C203 A>B   
+        myAlu.alufn = 6b110101;   
+        myAlu.a = 16b0111011010110001;
+        myAlu.b = 16b0011011010110001;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }   
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0]; 
+        
+      states.CPLE1:
+       seg.values = {4hC,4h3,4h0,4h1};   //C301 A<B   
+        myAlu.alufn = 6b110111;   
+        myAlu.a = 16b0011011010110001;
+        myAlu.b = 16b0111011010110001;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }   
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0]; 
+        
+      states.CPLE2:  
+       seg.values = {4hC,4h3,4h0,4h2};   //C302 A=B 
+        myAlu.alufn = 6b110111;   
+        myAlu.a = 16b0011011010110001;
+        myAlu.b = 16b0011011010110001;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }   
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0]; 
+        
+      states.CPLE3:
+       seg.values = {4hC,4h3,4h0,4h3};   //C303 A>B   
+        myAlu.alufn = 6b110111;   
+        myAlu.a = 16b0111011010110001;
+        myAlu.b = 16b0011011010110001;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }   
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0];
+        
+     states.ROTR:
+      seg.values = {4hC,4hA,4h0,4h1};   //CA01 rotate right by 2
+        myAlu.alufn = 6b100100;   
+        myAlu.a = 16b1111111100000000;
+        myAlu.b = 16b0000000000000010;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }   
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0];  
+        
+     states.ROTL:
+      seg.values = {4hC,4hA,4h0,4h2};   //CA02 rotate left by 2 
+        myAlu.alufn = 6b100101;   
+        myAlu.a = 16b1111111100000000;
+        myAlu.b = 16b0000000000000010;
+        if (io_dip[2][7] == 1) {
+          myAlu.a = 16b1;
+          }   
+        io_led[1] = myAlu.out[15:8];
+        io_led[0] = myAlu.out[7:0];      
+        
+    }
+ 
+    // AUTO STATE TRANSITION IF CORRECT
+    if (counter.q[26:0] == 0) {
+      case(states.q) {
+      
+        states.IDLE:
+          if(io_button[4] == 1) { // hold right button -> idle
+            states.d = states.AUTO;
+            }
+          
+        states.P:
+          if (counter.q == 0) {
+            if(io_button[1]==1){ // hold middle button -> idle
+             states.d = states.IDLE;
+              }     
+            }
+                         
+        states.F:
+          if (counter.q == 0) {
+            if(io_button[1]==1){ // hold middle button -> idle
+             states.d = states.IDLE;
+              }
+            }
+          
+        states.AUTO:
+          states.d = states.ADD1;
+          
+        // ADDER match output
+        states.ADD1:  
+          if (myAlu.out == 16b0011111111111111) { 
+            states.d = states.ADD2;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.ADD2:  
+          if (myAlu.out == 16b1111111111111111) { 
+            states.d = states.ADD3;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.ADD3:  
+          if (myAlu.out == 16b1111111111111110) {
+            states.d = states.SUB1;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.SUB1:  
+          if (myAlu.out == 16b0001010101010011) { 
+            states.d = states.SUB2;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.SUB2:  
+          if (myAlu.out == 16b0001011001010101) { 
+            states.d = states.SUB3;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.SUB3:  
+          if (myAlu.out == 16b1111111111110000) { 
+            states.d = states.MULT1;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.MULT1:  
+          if (myAlu.out == 16b0000000000000000 ) { 
+            states.d = states.MULT2;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.MULT2:  
+          if (myAlu.out == 16b0000000000000000) { 
+            states.d = states.MULT3;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.MULT3:  
+          if (myAlu.out == 16b0000010000000000) {
+            states.d = states.AND1;
+            } else {
+            states.d = states.F;
+            }                  
+          
+          
+        // BOOLE match output
+        states.AND1:  
+          if (myAlu.out == 16b0000010101000101) { 
+            states.d = states.AND2;
+            } else {
+            states.d = states.F;
+            }
+          
+        states.AND2:
+          if (myAlu.out == 16b0001010000000000) { 
+            states.d = states.AND3;
+            } else {
+            states.d = states.F;
+            }
+          
+        states.AND3:   
+          if (myAlu.out == 16b0000010101000101) { 
+            states.d = states.OR1;
+            } else {
+            states.d = states.F;
+            }
+          
+        states.OR1:    
+          if (myAlu.out == 16b0001111111110101) { 
+            states.d = states.OR2;
+            } else {
+            states.d = states.F;
+            }
+          
+        states.OR2:
+          if (myAlu.out == 16b0001110101010101) { 
+            states.d = states.OR3;
+            } else {
+            states.d = states.F;
+            } 
+          
+        states.OR3:
+          if (myAlu.out == 16b1001111111100101) {
+            states.d = states.XOR1;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.XOR1:
+          if (myAlu.out == 16b0001101010110000) { 
+            states.d = states.XOR2;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.XOR2:
+          if (myAlu.out == 16b0000100101010101) { 
+            states.d = states.XOR3;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.XOR3:
+          if (myAlu.out == 16b1001101010100000) { 
+            states.d = states.A1;
+            } else {
+            states.d = states.F;
+            }
+        states.A1:
+          if (myAlu.out == 16b1001010101000101) { 
+            states.d = states.SHL1;
+            } else {
+            states.d = states.F;
+            }           
+           
+          
+        // SHIFT match output
+        states.SHL1:
+          if (myAlu.out == 16b0010101010101010) { 
+            states.d = states.SHL2;
+            } else {
+            states.d = states.F;
+            } 
+          
+        states.SHL2:
+          if (myAlu.out == 16b1000000000000000) { 
+            states.d = states.SHL3;
+            } else {
+            states.d = states.F;
+            } 
+          
+        states.SHL3:
+          if (myAlu.out == 16b1010101010100000) { 
+            states.d = states.SHR1;
+            } else {
+            states.d = states.F;
+            } 
+          
+        states.SHR1:
+          if (myAlu.out == 16b0000101010101010) { 
+            states.d = states.SHR2;
+            } else {
+            states.d = states.F;
+            } 
+          
+        states.SHR2:
+          if (myAlu.out == 16b0000000000000001) { 
+            states.d = states.SHR3;
+            } else {
+            states.d = states.F;
+            } 
+          
+        states.SHR3:
+          if (myAlu.out == 16b0000000010101010) { 
+            states.d = states.SHA1;
+            } else {
+            states.d = states.F;
+            } 
+          
+        states.SHA1:
+          if (myAlu.out == 16b0000101010101010) { 
+            states.d = states.SHA2;
+            } else {
+            states.d = states.F;
+            } 
+          
+        states.SHA2:
+          if (myAlu.out == 16b1111111111111111) { 
+            states.d = states.SHA3;
+            } else {
+            states.d = states.F;
+            } 
+          
+        states.SHA3:
+          if (myAlu.out == 16b1111110010101010) { 
+            states.d = states.CPEQ1;
+            } else {
+            states.d = states.F;
+            }                 
+        
+          
+        // COMPARE match output
+        states.CPEQ1:
+          if (myAlu.out == 16b0000000000000000) { 
+            states.d = states.CPEQ2;
+            } else {
+            states.d = states.F;
+            }   
+          
+        states.CPEQ2:
+          if (myAlu.out == 16b0000000000000001) { 
+            states.d = states.CPEQ3;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.CPEQ3:
+          if (myAlu.out == 16b0000000000000000) { 
+            states.d = states.CPLT1;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.CPLT1:
+          if (myAlu.out == 16b0000000000000001) { 
+            states.d = states.CPLT2;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.CPLT2:
+          if (myAlu.out == 16b0000000000000000) { 
+            states.d = states.CPLT3;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.CPLT3:
+          if (myAlu.out == 16b0000000000000000) { 
+            states.d = states.CPLE1;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.CPLE1:
+          if (myAlu.out == 16b0000000000000001) { 
+            states.d = states.CPLE2;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.CPLE2:
+          if (myAlu.out == 16b0000000000000001) { 
+            states.d = states.CPLE3;
+            } else {
+            states.d = states.F;
+            }  
+          
+        states.CPLE3:
+          if (myAlu.out == 16b0000000000000000) { 
+            states.d = states.ROTR;
+            } else {
+            states.d = states.F;
+            }       
+            
+        states.ROTR:
+          if (myAlu.out == 16b0011111111000000) { 
+            states.d = states.ROTL;
+            } else {
+            states.d = states.F;
+            }   
+            
+        states.ROTL:
+          if (myAlu.out == 16b1111110000000011) { 
+            states.d = states.P;
+            } else {
+            states.d = states.F;
+            }      
+                
+      }
+ }
+    counter.d = counter.q + 1;
+    
+  }
+}
