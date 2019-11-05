@@ -1,4 +1,4 @@
-# COMP_STRUCT
+# 16 BIT MOJO COMP_STRUCT
 FPGA Mojo Lucid 
 
 ### Manual Testing
